@@ -125,8 +125,11 @@ extension VocabularyRescorer {
 
     /// Normalize text for similarity checks: lowercase, collapse whitespace,
     /// and strip punctuation while preserving letters, numbers, apostrophes, and hyphens.
+    /// Built once: `CharacterSet.union` builds a full bitmap, and this runs for every candidate word.
+    private static let similarityAllowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "'-"))
+
     static func normalizeForSimilarity(_ text: String) -> String {
-        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "'-"))
+        let allowed = similarityAllowed
         var result = ""
         var lastWasSpace = true
 
