@@ -255,7 +255,7 @@ extension CtcKeywordSpotter {
             array = try MLMultiArray(shape: [NSNumber(value: maxModelSamples)], dataType: dataType)
         }
 
-        // Copy actual samples (MLMultiArray is zero-initialized, so padding is implicit).
+        // Copy the samples and zero the padding (a new MLMultiArray is not guaranteed to be zeroed).
         Self.copySamples(audioSamples, count: clampedCount, into: array)
 
         if debugMode {
@@ -418,17 +418,23 @@ extension CtcKeywordSpotter {
     /// Writes `count` samples into a fresh `MLMultiArray` through its buffer — the same values the
     /// `array[i] = NSNumber(value:)` loop stores, without boxing every sample.
     static func copySamples(_ samples: [Float], count: Int, into array: MLMultiArray) {
+        // A new MLMultiArray is not guaranteed to be zeroed: the padding after the audio is set explicitly,
+        // or the encoder sees whatever the memory held (it changes every frame of a padded window).
+        let total = array.count
         switch array.dataType {
         case .float32:
             let dst = array.dataPointer.assumingMemoryBound(to: Float.self)
             samples.withUnsafeBufferPointer { src in dst.update(from: src.baseAddress!, count: count) }
+            (dst + count).update(repeating: 0, count: total - count)
         #if arch(arm64)
         case .float16:
             let dst = array.dataPointer.assumingMemoryBound(to: Float16.self)
             for i in 0..<count { dst[i] = Float16(samples[i]) }
+            (dst + count).update(repeating: 0, count: total - count)
         #endif
         default:
             for i in 0..<count { array[i] = NSNumber(value: samples[i]) }
+            for i in count..<total { array[i] = 0 }
         }
     }
 

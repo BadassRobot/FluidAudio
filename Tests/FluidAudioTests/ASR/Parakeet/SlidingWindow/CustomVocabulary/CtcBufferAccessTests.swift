@@ -54,16 +54,17 @@ final class CtcBufferAccessTests: XCTestCase {
         }
     }
 
-    func testSamplesMatchNSNumberWrites() throws {
+    func testSamplesMatchNSNumberWritesAndThePaddingIsZero() throws {
         let samples = values(1_000).map { $0 / 40 }
         for type in [MLMultiArrayDataType.float32, .float16] {
             for shape in [[NSNumber(value: 1_200)], [1, NSNumber(value: 1_200)]] {
                 let fast = try MLMultiArray(shape: shape, dataType: type)
+                for i in 0..<1_200 { fast[i] = 7 }      // a new MLMultiArray is not guaranteed to be zeroed
                 let slow = try MLMultiArray(shape: shape, dataType: type)
                 CtcKeywordSpotter.copySamples(samples, count: 900, into: fast)
                 for i in 0..<900 { slow[i] = NSNumber(value: samples[i]) }
-                assertSameBits(
-                    (0..<1_200).map { fast[$0].floatValue }, (0..<1_200).map { slow[$0].floatValue })
+                assertSameBits((0..<900).map { fast[$0].floatValue }, (0..<900).map { slow[$0].floatValue })
+                XCTAssertTrue((900..<1_200).allSatisfy { fast[$0].floatValue == 0 })
             }
         }
     }
