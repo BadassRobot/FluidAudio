@@ -256,9 +256,7 @@ extension CtcKeywordSpotter {
         }
 
         // Copy actual samples (MLMultiArray is zero-initialized, so padding is implicit).
-        for i in 0..<clampedCount {
-            array[i] = NSNumber(value: audioSamples[i])
-        }
+        Self.copySamples(audioSamples, count: clampedCount, into: array)
 
         if debugMode {
             let midpoint = clampedCount / 2
@@ -382,13 +380,26 @@ extension CtcKeywordSpotter {
             count: timeSteps
         )
 
+        // Read the logits through the array's buffer (one boxed NSNumber per element was most of the
+        // spotter's time); the NSNumber path stays for element types without a fast read.
+        let strides = ctcOutput.strides.map(\.intValue)
+        let (timeStride, vocabStride) = rank == 3 ? (strides[1], strides[2]) : (strides[3], strides[1])
+        let flat = Self.readLogits(
+            ctcOutput, timeSteps: timeSteps, vocabSize: vocabSize, timeStride: timeStride, vocabStride: vocabStride)
+
         // Iterate over time/vocab dimensions, read logits or log-probabilities.
         // Apply log-softmax per frame when needed.
         for t in 0..<timeSteps {
             var logits = [Float](repeating: 0, count: vocabSize)
 
-            for v in 0..<vocabSize {
-                logits[v] = ctcOutput[indexBuilder(t, v)].floatValue
+            if let flat {
+                for v in 0..<vocabSize {
+                    logits[v] = flat[t * vocabSize + v]
+                }
+            } else {
+                for v in 0..<vocabSize {
+                    logits[v] = ctcOutput[indexBuilder(t, v)].floatValue
+                }
             }
 
             var row = logSoftmax(logits, temperature: temperature)
@@ -402,6 +413,48 @@ extension CtcKeywordSpotter {
         }
 
         return logProbs
+    }
+
+    /// Writes `count` samples into a fresh `MLMultiArray` through its buffer — the same values the
+    /// `array[i] = NSNumber(value:)` loop stores, without boxing every sample.
+    static func copySamples(_ samples: [Float], count: Int, into array: MLMultiArray) {
+        switch array.dataType {
+        case .float32:
+            let dst = array.dataPointer.assumingMemoryBound(to: Float.self)
+            samples.withUnsafeBufferPointer { src in dst.update(from: src.baseAddress!, count: count) }
+        #if arch(arm64)
+        case .float16:
+            let dst = array.dataPointer.assumingMemoryBound(to: Float16.self)
+            for i in 0..<count { dst[i] = Float16(samples[i]) }
+        #endif
+        default:
+            for i in 0..<count { array[i] = NSNumber(value: samples[i]) }
+        }
+    }
+
+    /// The logits as a dense `[timeSteps × vocabSize]` row-major array read through the buffer with the
+    /// array's strides, or nil for an element type without a fast read (the caller then uses NSNumber).
+    static func readLogits(
+        _ array: MLMultiArray, timeSteps: Int, vocabSize: Int, timeStride: Int, vocabStride: Int
+    ) -> [Float]? {
+        func read<T>(_ type: T.Type, _ convert: (T) -> Float) -> [Float] {
+            let base = array.dataPointer.assumingMemoryBound(to: type)
+            var out = [Float](repeating: 0, count: timeSteps * vocabSize)
+            for t in 0..<timeSteps {
+                for v in 0..<vocabSize {
+                    out[t * vocabSize + v] = convert(base[t * timeStride + v * vocabStride])
+                }
+            }
+            return out
+        }
+        switch array.dataType {
+        case .float32: return read(Float.self) { $0 }
+        case .double: return read(Double.self) { Float($0) }
+        #if arch(arm64)
+        case .float16: return read(Float16.self) { Float($0) }
+        #endif
+        default: return nil
+        }
     }
 
     private func logSoftmax(_ logits: [Float], temperature: Float = 1.0) -> [Float] {
