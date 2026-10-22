@@ -80,6 +80,23 @@ extension VocabularyRescorer {
         return Self.normalizedForms(canonicalTerm: term.text, aliases: aliases)
     }
 
+    /// Whether a span of more words than the form it matches holds an edge word that is no part of the term: the span
+    /// without its first word, or without its last, matches a multi-word form at least as well as the whole span does.
+    /// Such a span is the term plus a neighbour (`at Acme Labs` for `Acme Labs`); replacing it drops the
+    /// neighbour. The shorter span is a candidate of its own — or already the term — so skipping the longer loses no
+    /// replacement. A term split into more words (`Conto so Systems` for `Contoso Systems`) matches worse trimmed.
+    static func hasSpareEdgeWord(_ spanWords: [String], forms: [NormalizedForm], similarity: Float) -> Bool {
+        guard spanWords.count > 1 else { return false }
+        for trimmed in [spanWords.dropFirst(), spanWords.dropLast()] {
+            let phrase = normalizeForSimilarity(trimmed.joined(separator: " "))
+            guard !phrase.isEmpty else { continue }
+            if forms.contains(where: { $0.wordCount > 1 && stringSimilarity(phrase, $0.normalized) >= similarity }) {
+                return true
+            }
+        }
+        return false
+    }
+
     // MARK: - Similarity Thresholds
 
     /// Determine required similarity threshold based on span length and word length
