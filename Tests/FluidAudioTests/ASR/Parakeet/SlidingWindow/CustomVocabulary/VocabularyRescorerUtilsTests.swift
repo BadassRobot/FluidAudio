@@ -229,4 +229,26 @@ final class VocabularyRescorerUtilsTests: XCTestCase {
             )
         }
     }
+
+    // MARK: - Spare Edge Words
+
+    func testSpanOfTheTermAndANeighbourHasASpareEdgeWord() {
+        // A span one word longer than its multi-word term that is the term plus a neighbour.
+        func spare(_ span: String, _ term: String) -> Bool {
+            let forms = VocabularyRescorer.normalizedForms(canonicalTerm: term, aliases: [])
+            let words = span.split(separator: " ").map(String.init)
+            let similarity = VocabularyRescorer.stringSimilarity(
+                VocabularyRescorer.normalizeForSimilarity(span), forms[0].normalized)
+            return VocabularyRescorer.hasSpareEdgeWord(words, forms: forms, similarity: similarity)
+        }
+        XCTAssertTrue(spare("at Acme Labs.", "Acme Labs"))
+        XCTAssertTrue(spare("Acme labs or", "Acme Labs"))
+        XCTAssertTrue(spare("and Contoso Systems", "Contoso Systems"))
+        XCTAssertTrue(spare("the Fabrikam foundation", "Fabrikam Foundation"))
+        XCTAssertTrue(spare("at Akme Labs", "Acme Labs"), "the neighbour off a misspelt term: that span is its own candidate")
+        // The term split into more words keeps its replacement.
+        XCTAssertFalse(spare("Conto so Systems", "Contoso Systems"))
+        XCTAssertFalse(spare("Ac me Labs", "Acme Labs"))
+        XCTAssertFalse(spare("Acme", "Acme Labs"))
+    }
 }

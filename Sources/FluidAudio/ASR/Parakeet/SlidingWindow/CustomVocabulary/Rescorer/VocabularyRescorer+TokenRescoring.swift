@@ -828,11 +828,13 @@ extension VocabularyRescorer {
                         // Check similarity against ALL forms (canonical + aliases)
                         var bestSimilarity: Float = 0
                         var matchedAlias: String?
+                        var matchedWordCount = 0
                         for form in multiWordForms {
                             let similarity = Self.stringSimilarity(normalizedPhrase, form.normalized)
                             if similarity > bestSimilarity {
                                 bestSimilarity = similarity
                                 matchedAlias = form.matchedAlias
+                                matchedWordCount = form.wordCount
                             }
                         }
 
@@ -856,6 +858,15 @@ extension VocabularyRescorer {
                             spanLength: spanLength
                         )
                         if bestSimilarity < minSimilarityForSpan { continue }
+
+                        // A span longer than its form that is the term plus a neighbour: replacing it would drop the
+                        // neighbour (`at Acme Labs` → `Acme Labs`); the span without it is a candidate of its own.
+                        if spanLength > matchedWordCount,
+                            Self.hasSpareEdgeWord(spanWords, forms: multiWordForms, similarity: bestSimilarity)
+                        {
+                            debugLog("  [MULTI] Skipping '\(tdtPhrase)' for '\(vocabTerm)': an edge word is no part of it")
+                            continue
+                        }
 
                         // Get temporal window for the entire span
                         guard let firstIdx = spanIndices.first, let lastIdx = spanIndices.last else { continue }
